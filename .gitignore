@@ -52,3 +52,6 @@ venv/
 # Coverage
 coverage/
 .nyc_output/
+
+# Documentos
+documents/
