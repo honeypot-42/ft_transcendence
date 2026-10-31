@@ -1,0 +1,6 @@
+README.md
+Dockerfile
+.dockerignore
+__pycache__/
+*.pyc
+*.json
