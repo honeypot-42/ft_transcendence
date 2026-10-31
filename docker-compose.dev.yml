@@ -20,6 +20,7 @@ networks:
 volumes:
   postgres_data:
   elasticsearch_data:
+  honeypot_logs:
 
 # ─── Services ────────────────────────────────────────────────────────────────
 services:
@@ -160,8 +161,7 @@ services:
   # ---------------------------------------------------------------------------
   # Attack Simulator — generates realistic honeypot logs for development
   # Replaces real honeypots during S1-S8. Real honeypots take over in S9 (VPS).
-  # Owner: P4
-  # Usage: python simulate_attacks.py --mode basic --rate 10
+  # Owner: P4 (Check simulator/README.md)
   # ---------------------------------------------------------------------------
   simulator:
     build:
@@ -169,15 +169,15 @@ services:
       dockerfile: Dockerfile
     container_name: transcendence-simulator
     restart: unless-stopped
+    network_mode: none
     environment:
-      - SIMULATOR_MODE=${SIMULATOR_MODE:-basic}
-      - SIMULATOR_RATE=${SIMULATOR_RATE:-10}
-      - ES_HOST=http://elasticsearch:9200
-    networks:
-      - app_net
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
+      - SIM_MODE=${SIMULATOR_MODE:-basic}
+    volumes:
+      - honeypot_logs:/var/log/honeypot
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     deploy:
       resources:
         limits:

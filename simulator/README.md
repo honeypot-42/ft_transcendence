@@ -2,7 +2,7 @@
 
 A small Python program that writes **fake honeypot events in the exact format of Cowrie** to a shared log file. It lets the whole SENTINEL pipeline run (and be evaluated) on any machine without exposing a real honeypot to the internet.
 
-> **Status:** design document. The interface below is the contract agreed with the data pipeline (Logstash). The implementation is tracked in issue #25.
+> **Status:** implemented (issue #25). The event format below is the contract with the data pipeline (Logstash).
 
 ## Why it exists
 
@@ -33,7 +33,7 @@ Every line is flushed immediately so Logstash (file input) picks it up in real t
 | `enriched` | ~30 events/min | Demos and evaluation: more countries, brute-force bursts, commands |
 | `stress` | ~200 events/min | Load tests (the dashboard must hold 200 events/min) |
 
-## Usage (planned interface)
+## Usage
 
 ```bash
 python simulator.py --mode basic
@@ -45,7 +45,39 @@ python simulator.py --mode enriched --output /var/log/honeypot/cowrie.json
 | `--mode` | `SIM_MODE` | `basic` | `basic`, `enriched` or `stress` |
 | `--output` | `SIM_OUTPUT` | `/var/log/honeypot/cowrie.json` | Log file to append to |
 
-In Docker Compose the mode is selected with `SIM_MODE`, so no external key or manual step is needed.
+No external key or manual step is needed. The output directory is created if it does not exist.
+
+## Docker Compose
+
+```yaml
+simulator:
+  build:
+    context: ./simulator
+    dockerfile: Dockerfile
+  container_name: transcendence-simulator
+  restart: unless-stopped
+  network_mode: none
+  environment:
+    - SIM_MODE=${SIMULATOR_MODE:-basic}
+  volumes:
+    - honeypot_logs:/var/log/honeypot
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  deploy:
+    resources:
+      limits:
+        memory: 128m
+```
+
+Notes:
+
+- `SIMULATOR_MODE` in `.env` selects the mode (`basic` by default). The compose maps it to the `SIM_MODE` variable the script reads.
+- `network_mode: none`: the simulator has no network. The volume is its only output, as for a real honeypot.
+- The image defines a `HEALTHCHECK`: the container is healthy while the log file keeps being written (modified in the last 120 s).
+- The container runs as a non-root user (uid 10001). The image creates `/var/log/honeypot` owned by that user, so a new named volume inherits the ownership. Logstash must mount the same volume read-only (`honeypot_logs:/var/log/honeypot:ro`).
+- In the development compose Logstash is not started yet, so the file simply grows. This is expected: the first deliverable is a `cowrie.json` with valid events.
 
 ## Event format
 
@@ -99,6 +131,8 @@ The IPs above are documentation ranges, only to keep this README harmless. The s
 5. **Fake data only.** Credentials and commands come from a built-in list of common attack patterns. No real third-party credentials. `shasum` values are random hashes: **no real malware, no real URLs that serve payloads**.
 6. **Hostile-looking content stays text.** Commands may contain things like `<script>alert(1)</script>`; the dashboard must display them escaped (see the security checklist).
 7. **Append-only and flushed.** Never truncate or rewrite the log file.
+
+> **Known limitation:** the file is never rotated. At about 260 bytes per event, `basic` writes ~4 MB/day and `stress` ~75 MB/day. Reset it with `docker compose down -v` (removes the volume). Rotation can be added if a long-running deployment needs it.
 
 ## Verification
 
