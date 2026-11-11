@@ -1,98 +1,227 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Backend — SENTINEL Honeypot Dashboard
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+REST API + WebSocket server for the SENTINEL project. Built with NestJS + TypeScript.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+---
 
-## Description
+## What does this backend do?
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+This server is the **brain of the dashboard**. Its responsibilities are:
 
-## Project setup
+1. Receive HTTP requests from the frontend (React) and respond with data
+2. Query Elasticsearch to retrieve attacks detected by the honeypots
+3. Push real-time events to the frontend via WebSocket
+4. Handle user management, authentication and chat
 
-```bash
-$ npm install
-```
+---
 
-## Compile and run the project
+## Tech Stack
 
-```bash
-# development
-$ npm run start
+| Technology | Version | Purpose |
+|-----------|---------|---------|
+| **NestJS** | v11 | Main framework (structure, modules, dependency injection) |
+| **TypeScript** | strict | Strict typing — 0 implicit `any` |
+| **class-validator** | — | Validate incoming request payloads |
+| **@nestjs/config** | — | Read environment variables safely |
+| **@nestjs/jwt** | — | Generate and verify JWT tokens |
+| **joi** | — | Validate that all required environment variables are set |
+| **@nestjs/websockets** + **socket.io** | v11 | Real-time events to the dashboard |
 
-# watch mode
-$ npm run start:dev
+---
 
-# production mode
-$ npm run start:prod
-```
+## How to run locally
 
-## Run tests
+### 1. Prerequisites
+
+- Node.js ≥ 20
+- npm ≥ 10
+- A `.env` file at the **repository root** (copy from `.env.example`, see below)
+
+### 2. Install dependencies
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+cd backend
+npm install
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### 3. Start in development mode (with hot-reload)
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npm run start:dev
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+The server listens on the **internal** port 3001. You should see this in the terminal:
 
-## Resources
+```
+[Nest] ... LOG [Bootstrap] SENTINEL backend listening on internal port 3001
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+> Port 3001 is for local development only. In the Docker stack the backend is never
+> published on the host: every request goes through Nginx over HTTPS
+> (`https://localhost/api/v1/...`).
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+### 4. Other useful commands
 
-## Support
+```bash
+npm run build      # Compile TypeScript → JavaScript (output: dist/)
+npm run start      # Start in production mode (requires build first)
+npm run lint       # Check code style with ESLint (applies automatic fixes)
+npm run test       # Run unit tests with Jest
+npm run test:e2e   # Run integration tests (end-to-end)
+```
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+---
 
-## Stay in touch
+## Folder structure
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+```
+backend/
+├── src/
+│   ├── main.ts                    # Entry point — starts the server
+│   ├── app.module.ts              # Root module — registers all other modules
+│   │
+│   ├── auth/                      # [P5] Authentication: register, login, JWT
+│   │   ├── auth.module.ts
+│   │   ├── auth.controller.ts     # Routes: POST /auth/register, POST /auth/login
+│   │   └── auth.service.ts        # Logic: bcrypt, JWT, credential validation
+│   │
+│   ├── users/                     # [P5] User management and profiles
+│   │   ├── users.module.ts
+│   │   ├── users.controller.ts    # Routes: GET /users/me, PATCH /users/me
+│   │   └── users.service.ts       # Logic: user CRUD, avatar upload
+│   │
+│   ├── attacks/                   # [P2] Honeypot attack data
+│   │   ├── attacks.module.ts
+│   │   ├── attacks.controller.ts  # Routes: GET /attacks, POST /attacks/search
+│   │   └── attacks.service.ts     # Logic: Elasticsearch queries
+│   │
+│   ├── websocket/                 # [P2] Real-time communication
+│   │   ├── websocket.module.ts
+│   │   └── websocket.gateway.ts   # Socket.io gateway (registered once the handshake is authenticated)
+│   │
+│   └── elasticsearch/             # [P2] Elasticsearch connection
+│       ├── elasticsearch.module.ts
+│       └── elasticsearch.service.ts  # ES client wrapper
+│
+├── test/
+│   └── app.e2e-spec.ts            # Integration tests (completed in S11)
+│
+├── package.json                   # Dependencies and npm scripts
+├── tsconfig.json                  # TypeScript config (strict mode)
+└── nest-cli.json                  # NestJS CLI config
+```
 
-## License
+---
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+## How NestJS works — simplified
+
+NestJS organizes code into **modules**. Each module has 3 parts:
+
+```
+HTTP Request
+     │
+     ▼
+Controller        ← Receives the request and decides what to do
+     │                Example: "incoming GET /attacks"
+     ▼
+Service           ← Contains the business logic
+     │                Example: "queries Elasticsearch and returns the data"
+     ▼
+HTTP Response
+```
+
+The **`AppModule`** (`app.module.ts`) is the root module that imports all others.
+Think of it as the `index.js` of the structure — if a module is not listed here, the server does not know it exists.
+
+### `main.ts` — the entry point
+
+```typescript
+// Create the NestJS application
+const app = await NestFactory.create(AppModule);
+
+// Enable automatic validation of incoming data
+app.useGlobalPipes(
+  new ValidationPipe({
+    whitelist: true, // Strip properties not declared in the DTO
+    forbidNonWhitelisted: true, // Unexpected field → 400 Bad Request
+    transform: true, // Convert the payload into a DTO instance
+  }),
+);
+
+// All endpoints are prefixed with /api/v1
+// Example: /api/v1/attacks, /api/v1/auth/login
+app.setGlobalPrefix('api/v1');
+
+// Listen on the internal port (PORT, default 3001)
+const port = process.env['PORT'] ?? 3001;
+await app.listen(port);
+Logger.log(`SENTINEL backend listening on internal port ${port}`, 'Bootstrap');
+```
+
+---
+
+## Environment variables
+
+All secrets live in a single `.env` file at the **repository root**. It is created from
+the template and never committed:
+
+```bash
+# from the repository root
+cp .env.example .env
+```
+
+With Docker Compose, the backend receives these variables from `docker-compose.dev.yml`
+(which reads them from `.env`):
+
+| Variable | Source in `.env` | Purpose |
+|----------|------------------|---------|
+| `NODE_ENV`, `PORT` | set by compose | Runtime mode and internal port (default `3001`) |
+| `JWT_SECRET`, `JWT_EXPIRES_IN` | `JWT_SECRET`, `JWT_EXPIRES_IN` | Sign and expire JWT tokens |
+| `DB_HOST`, `DB_PORT` | set by compose | PostgreSQL service address |
+| `DB_USER`, `DB_PASSWORD`, `DB_NAME` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | PostgreSQL credentials |
+| `ES_HOST` | set by compose | Elasticsearch service address |
+| `ES_USER`, `ES_PASSWORD` | `ELASTIC_USER`, `ELASTIC_PASSWORD` | Elasticsearch credentials |
+
+> ⚠️ **Never commit the real `.env` file.** It is listed in `.gitignore`.
+> Only `.env.example` with placeholder values is committed. The list of variables
+> lives in `.env.example`; this table only explains how the backend uses them.
+
+---
+
+## Current module status
+
+| Module | Owner | Status in S2 | Implemented in |
+|--------|-------|-------------|----------------|
+| `auth/` | P5 | Empty stub | S2 (register/login endpoints) |
+| `users/` | P5 | Empty stub | S3 (user CRUD) |
+| `attacks/` | P2 | Empty stub | S4–S6 (ES queries) |
+| `websocket/` | P2 | Gateway skeleton, not registered | S3 (authenticated Socket.io gateway) |
+| `elasticsearch/` | P2 | Empty stub | S4 (queries) |
+
+---
+
+## Typical request flow
+
+```
+Frontend (React)
+      │  HTTP GET /api/v1/attacks
+      ▼
+  Nginx (port 443)
+      │  proxy → backend:3001
+      ▼
+  NestJS backend
+      │
+      ├── AttacksController.findAll()
+      │         │
+      │         ▼
+      │   AttacksService.getAttacks()
+      │         │
+      │         ▼
+      │   ElasticsearchService.search(query)
+      │         │
+      │         ▼
+      │   Elasticsearch (port 9200)
+      │         │  returns documents
+      │         ▼
+      └── JSON response to frontend
+```
