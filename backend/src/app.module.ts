@@ -8,7 +8,13 @@ import { WebsocketModule } from './websocket/websocket.module';
 import { ElasticsearchModule } from './elasticsearch/elasticsearch.module';
 
 @Module({
-  imports: [AuthModule, UsersModule, AttacksModule, WebsocketModule, ElasticsearchModule],
+  imports: [
+    AuthModule,
+    UsersModule,
+    AttacksModule,
+    WebsocketModule,
+    ElasticsearchModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })

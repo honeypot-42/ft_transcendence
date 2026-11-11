@@ -4,6 +4,6 @@ import { AttacksService } from './attacks.service';
 
 @Module({
   controllers: [AttacksController],
-  providers: [AttacksService]
+  providers: [AttacksService],
 })
 export class AttacksModule {}
