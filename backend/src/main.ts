@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
-import { AppModule } from './app.module.js';
+import { Logger, ValidationPipe } from '@nestjs/common';
+import { AppModule } from './app.module';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
@@ -19,7 +19,8 @@ async function bootstrap(): Promise<void> {
 
   const port = process.env['PORT'] ?? 3001;
   await app.listen(port);
-  console.log(`🚀 SENTINEL backend running on: http://localhost:${port}`);
+  // Internal port only: the public entry point is Nginx over HTTPS
+  Logger.log(`SENTINEL backend listening on internal port ${port}`, 'Bootstrap');
 }
 
 void bootstrap();
