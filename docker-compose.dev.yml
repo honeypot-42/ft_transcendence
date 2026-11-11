@@ -1,0 +1,194 @@
+# docker-compose.dev.yml
+#
+# Development environment — lightweight stack for local development.
+# Excludes: Kibana, Logstash, Honeypots, Prometheus, Grafana
+# RAM usage: ~2 GB (comfortable on any machine with 8 GB)
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up --build
+#   docker compose -f docker-compose.dev.yml down
+#   docker compose -f docker-compose.dev.yml down -v   # also removes volumes
+
+name: transcendence-dev
+
+# ─── Networks ────────────────────────────────────────────────────────────────
+networks:
+  app_net:
+    driver: bridge
+
+# ─── Volumes ─────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+  elasticsearch_data:
+
+# ─── Services ────────────────────────────────────────────────────────────────
+services:
+
+  # ---------------------------------------------------------------------------
+  # Frontend — React 18 + Vite (dev server with HMR)
+  # Accessible at: http://localhost:3000
+  # Owner: P1
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: transcendence-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:3001}
+      - VITE_WS_URL=${VITE_WS_URL:-http://localhost:3001}
+    networks:
+      - app_net
+    depends_on:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  # ---------------------------------------------------------------------------
+  # Backend — NestJS (watch mode, auto-reload on changes)
+  # Accessible at: http://localhost:3001
+  # Swagger docs at: http://localhost:3001/api/docs
+  # Owner: P2
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: transcendence-backend
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_NAME=${POSTGRES_DB}
+      - ES_HOST=http://elasticsearch:9200
+      - ES_USER=${ELASTIC_USER:-elastic}
+      - ES_PASSWORD=${ELASTIC_PASSWORD:-}
+    networks:
+      - app_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  # ---------------------------------------------------------------------------
+  # Database — PostgreSQL 16
+  # Stores: users, friendships, messages, notifications, api_keys
+  # Owner: P5
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: transcendence-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ---------------------------------------------------------------------------
+  # Search & Analytics — Elasticsearch 8
+  # Stores: attack events from honeypots (indexed by Logstash)
+  # Accessible at: http://localhost:9200
+  # Owner: P3
+  # NOTE: Security disabled in dev for simplicity. Enabled in production.
+  # ---------------------------------------------------------------------------
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    container_name: transcendence-elasticsearch
+    restart: unless-stopped
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx1g
+      - cluster.name=transcendence-dev
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - app_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cat/health | grep -q green"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1536m
+
+  # ---------------------------------------------------------------------------
+  # Attack Simulator — generates realistic honeypot logs for development
+  # Replaces real honeypots during S1-S8. Real honeypots take over in S9 (VPS).
+  # Owner: P4
+  # Usage: python simulate_attacks.py --mode basic --rate 10
+  # ---------------------------------------------------------------------------
+  simulator:
+    build:
+      context: ./simulator
+      dockerfile: Dockerfile
+    container_name: transcendence-simulator
+    restart: unless-stopped
+    environment:
+      - SIMULATOR_MODE=${SIMULATOR_MODE:-basic}
+      - SIMULATOR_RATE=${SIMULATOR_RATE:-10}
+      - ES_HOST=http://elasticsearch:9200
+    networks:
+      - app_net
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+# ─── RAM Summary (development) ───────────────────────────────────────────────
+# frontend:         512 MB
+# backend:          512 MB
+# postgres:         256 MB
+# elasticsearch:   1536 MB  (heap 512MB-1GB + JVM overhead)
+# simulator:        128 MB
+# Docker overhead:  ~200 MB
+# ─────────────────────────────
+# TOTAL:           ~3.1 GB    OK on any machine with 8 GB RAM
