@@ -137,12 +137,15 @@ class Session:
         eventid, extra = self.steps.pop(0)
         event = {"eventid": eventid}
         event.update(extra)
+        # Connection fields go on every event of the session, as Cowrie does.
         event["src_ip"] = self.src_ip
+        event["src_port"] = self.src_port
+        event["dst_ip"] = DST_IP
+        event["dst_port"] = self.dst_port
         event["session"] = self.id
         event["protocol"] = self.protocol
         event["sensor"] = SENSOR
         if eventid == "cowrie.session.connect":
-            event.update({"src_port": self.src_port, "dst_ip": DST_IP, "dst_port": self.dst_port})
             event["message"] = "New connection: %s:%d" % (self.src_ip, self.src_port)
         elif eventid == "cowrie.client.version":
             event["message"] = "Remote SSH version: %s" % extra["version"]
@@ -176,7 +179,9 @@ def stop(_signum, _frame):
 def run(mode, output):
     cfg = MODES[mode]
     interval = 60.0 / cfg["rate"]
-    os.makedirs(os.path.dirname(output), exist_ok=True)
+    folder = os.path.dirname(output)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
     active = []
     total = 0
     print("simulator: mode=%s rate=%d/min output=%s" % (mode, cfg["rate"], output), flush=True)

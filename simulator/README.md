@@ -36,7 +36,7 @@ Every line is flushed immediately so Logstash (file input) picks it up in real t
 ## Usage
 
 ```bash
-python simulator.py --mode basic
+python simulator.py --mode basic --output ./cowrie.json
 python simulator.py --mode enriched --output /var/log/honeypot/cowrie.json
 ```
 
@@ -45,7 +45,7 @@ python simulator.py --mode enriched --output /var/log/honeypot/cowrie.json
 | `--mode` | `SIM_MODE` | `basic` | `basic`, `enriched` or `stress` |
 | `--output` | `SIM_OUTPUT` | `/var/log/honeypot/cowrie.json` | Log file to append to |
 
-No external key or manual step is needed. The output directory is created if it does not exist.
+No external key or manual step is needed. The output directory is created if it does not exist. Outside Docker, pass `--output` with a path you can write to: the default is under `/var/log`, which normally needs root.
 
 ## Docker Compose
 
@@ -116,8 +116,8 @@ The mapping lives in `elk/logstash/mappings/` and is maintained by the data pipe
 
 ```json
 {"eventid":"cowrie.session.connect","src_ip":"198.51.100.23","src_port":51234,"dst_ip":"172.18.0.2","dst_port":2222,"session":"a1b2c3d4e5f6","protocol":"ssh","sensor":"honeypot-sim","message":"New connection: 198.51.100.23:51234","timestamp":"2026-10-30T10:15:42.123456Z"}
-{"eventid":"cowrie.login.failed","username":"root","password":"123456","src_ip":"198.51.100.23","session":"a1b2c3d4e5f6","protocol":"ssh","sensor":"honeypot-sim","message":"login attempt [root/123456] failed","timestamp":"2026-10-30T10:15:43.401002Z"}
-{"eventid":"cowrie.command.input","input":"uname -a","src_ip":"198.51.100.23","session":"a1b2c3d4e5f6","protocol":"ssh","sensor":"honeypot-sim","message":"CMD: uname -a","timestamp":"2026-10-30T10:15:50.870311Z"}
+{"eventid":"cowrie.login.failed","username":"root","password":"123456","src_ip":"198.51.100.23","src_port":51234,"dst_ip":"172.18.0.2","dst_port":2222,"session":"a1b2c3d4e5f6","protocol":"ssh","sensor":"honeypot-sim","message":"login attempt [root/123456] failed","timestamp":"2026-10-30T10:15:43.401002Z"}
+{"eventid":"cowrie.command.input","input":"uname -a","src_ip":"198.51.100.23","src_port":51234,"dst_ip":"172.18.0.2","dst_port":2222,"session":"a1b2c3d4e5f6","protocol":"ssh","sensor":"honeypot-sim","message":"CMD: uname -a","timestamp":"2026-10-30T10:15:50.870311Z"}
 ```
 
 The IPs above are documentation ranges, only to keep this README harmless. The simulator itself uses **real public IP ranges from several countries**, because private or reserved addresses are not geolocated and would leave the map empty.
@@ -132,7 +132,7 @@ The IPs above are documentation ranges, only to keep this README harmless. The s
 6. **Hostile-looking content stays text.** Commands may contain things like `<script>alert(1)</script>`; the dashboard must display them escaped (see the security checklist).
 7. **Append-only and flushed.** Never truncate or rewrite the log file.
 
-> **Known limitation:** the file is never rotated. At about 260 bytes per event, `basic` writes ~4 MB/day and `stress` ~75 MB/day. Reset it with `docker compose down -v` (removes the volume). Rotation can be added if a long-running deployment needs it.
+> **Known limitation:** the file is never rotated. At about 300 bytes per event, `basic` writes ~4 MB/day and `stress` ~85 MB/day. Reset it with `docker compose down -v` (removes the volume). Rotation can be added if a long-running deployment needs it.
 
 ## Verification
 
