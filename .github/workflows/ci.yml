@@ -1,0 +1,236 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+
+# Least privilege by default: jobs can only read the repository.
+permissions:
+  contents: read
+
+# A new push to the same PR cancels the run that is still in progress.
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Decides which jobs must run. Path filtering is done here and not with
+  # `on.pull_request.paths`: a required check whose workflow never starts
+  # stays "pending" forever and blocks the merge.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # paths-filter lists the PR files through the API
+    outputs:
+      backend: ${{ steps.filter.outputs.backend == 'true' && steps.projects.outputs.backend == 'true' }}
+      frontend: ${{ steps.filter.outputs.frontend == 'true' && steps.projects.outputs.frontend == 'true' }}
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # A project is only checked once it exists (the frontend does not yet).
+      - name: Detect existing projects
+        id: projects
+        run: |
+          for project in backend frontend; do
+            if [ -f "$project/package.json" ]; then
+              echo "$project=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$project=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/ci.yml'
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/ci.yml'
+            docker:
+              - 'docker-compose*.yml'
+              - '**/Dockerfile*'
+              - 'nginx/**'
+              - '.env.example'
+              - '.github/workflows/ci.yml'
+
+  backend:
+    name: Backend
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      # `npm ci` installs exactly what package-lock.json says and fails if
+      # the lockfile is out of sync with package.json.
+      - name: Install dependencies
+        run: npm ci
+
+      # Fails on high or critical advisories in production dependencies only:
+      # devDependencies never reach the runtime image. Lower levels are still
+      # listed in the log. The result can change without code changes when a
+      # new advisory is published.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Type check
+        run: npx tsc --noEmit -p tsconfig.json
+
+      # Never `npm run lint`: that script uses --fix and would hide errors.
+      - name: Lint
+        run: npx eslint "{src,test}/**/*.ts" --max-warnings 0
+
+      - name: Unit tests
+        run: npm test -- --ci
+
+      - name: E2E tests
+        run: npm run test:e2e -- --ci
+
+      - name: Build
+        run: npm run build
+
+  frontend:
+    name: Frontend
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npx eslint . --max-warnings 0
+
+      - name: Build
+        run: npm run build
+
+  docker:
+    name: Docker
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      # Image pinned by digest (v2.15.1): a tag can be moved, a digest cannot.
+      HADOLINT_IMAGE: hadolint/hadolint@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # .env.example provides the variables, so no real .env is ever needed.
+      - name: Validate compose files
+        run: |
+          for file in docker-compose*.yml; do
+            echo "Validating $file"
+            docker compose -f "$file" --env-file .env.example config -q
+          done
+
+      - name: Lint Dockerfiles
+        run: |
+          mapfile -t files < <(git ls-files ':(glob)**/Dockerfile*')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::notice::No Dockerfiles found, nothing to lint"
+            exit 0
+          fi
+          status=0
+          for file in "${files[@]}"; do
+            echo "Linting $file"
+            docker run --rm -i "$HADOLINT_IMAGE" hadolint --failure-threshold warning - < "$file" || status=1
+          done
+          exit "$status"
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      # Full history so that every commit of the PR can be scanned.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The binary is only used if its checksum matches the official release.
+      - name: Install gitleaks
+        run: |
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLo "$RUNNER_TEMP/$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+
+      # Scans every commit of the PR, not only the final diff: a secret that is
+      # added and then deleted is still in the history. --redact keeps the
+      # secret itself out of the public logs.
+      - name: Scan pull request commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # gitleaks exits 0 on an unknown range ("0 commits scanned"),
+          # so make sure both ends exist before trusting a green result.
+          git cat-file -e "${BASE_SHA}^{commit}"
+          git cat-file -e "${HEAD_SHA}^{commit}"
+          "$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose \
+            --log-opts="${BASE_SHA}..${HEAD_SHA}"
+
+  # Single check to mark as required in branch protection. A skipped job
+  # (nothing changed in its folder) counts as passed; a failed or cancelled
+  # one makes this check fail.
+  ci-result:
+    name: CI result
+    if: always()
+    needs: [changes, backend, frontend, docker, secrets]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Check job results
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+              echo "::error::At least one CI job failed or was cancelled"
+              exit 1
+            fi
+          done

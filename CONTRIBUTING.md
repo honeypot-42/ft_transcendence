@@ -142,3 +142,57 @@ npm run lint       # 0 errors, 0 warnings
 7. Get at least 1 approval → merge → issue moves to **Done**
 
 For more details on how to use GitHub Issues, Projects and Milestones, read [docs/github_workflow.md](./docs/github_workflow.md).
+
+---
+
+## Continuous Integration
+
+Every pull request to `develop` or `main` runs two workflows in GitHub Actions.
+A PR cannot be merged until the required checks are green.
+
+### What is checked
+
+| Job | Runs when the PR changes | What it does |
+|-----|--------------------------|--------------|
+| **Backend** | `backend/**` | `npm ci`, `npm audit` of production dependencies (fails on high or critical), type check, ESLint (0 warnings), unit tests, e2e tests, build |
+| **Frontend** | `frontend/**` | `npm ci`, ESLint (0 warnings), build |
+| **Docker** | `docker-compose*.yml`, `**/Dockerfile*`, `nginx/**`, `.env.example` | `docker compose config -q` and hadolint on every Dockerfile |
+| **Secret scan** | always | gitleaks on every commit of the PR |
+| **CI result** | always | Fails if any job above failed. A job skipped because its folder did not change counts as passed |
+| **CodeQL** | always | Static security analysis of JavaScript/TypeScript |
+
+Required checks in branch protection: **CI result** and **Analyze (javascript-typescript)**.
+
+### Reproduce it locally
+
+```bash
+# Backend
+cd backend
+npm ci
+npm audit --omit=dev --audit-level=high
+npx tsc --noEmit -p tsconfig.json
+npx eslint "{src,test}/**/*.ts" --max-warnings 0   # not `npm run lint`: it uses --fix
+npm test
+npm run test:e2e
+npm run build
+
+# Frontend
+cd frontend
+npm ci
+npx eslint . --max-warnings 0
+npm run build
+
+# Docker (from the repository root)
+docker compose -f docker-compose.dev.yml --env-file .env.example config -q
+docker run --rm -i hadolint/hadolint:v2.15.1 hadolint --failure-threshold warning - < backend/Dockerfile
+
+# Secrets: commits of your branch that are not in develop yet
+gitleaks git --redact --log-opts="origin/develop..HEAD"
+```
+
+If `npm audit` fails, run `npm audit fix` (never `--force`: it can jump to a new
+major version) and then `npm ci`, so `node_modules` matches the updated lockfile.
+A new advisory can turn a PR red even if it does not touch dependencies.
+
+If gitleaks reports a real secret, removing it in a new commit is not enough:
+it is still in the history. Rotate the secret and ask for help to rewrite the branch.
