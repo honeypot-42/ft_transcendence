@@ -23,6 +23,9 @@ DEFAULT_OUTPUT = "/var/log/honeypot/cowrie.json"
 # bound keeps a typo from flooding the disk shared with the host.
 MIN_RATE = 1
 MAX_RATE = 1000
+# Size at which the log is rotated: it becomes <file>.1 and a new file starts.
+# With one rotated copy, the simulator never uses more than ~2x this on disk.
+ROTATE_BYTES = 50 * 1024 * 1024
 SENSOR = "honeypot-sim"
 DST_IP = "172.18.0.2"
 
@@ -191,6 +194,24 @@ def parse_rate(value):
     return rate
 
 
+def open_log(output):
+    """Open the log for appending, line buffered so Logstash sees each event at once."""
+    return open(output, "a", encoding="utf-8", buffering=1)
+
+
+def rotate(fh, output):
+    """Keep the full log as <output>.1 (replacing the previous one) and start a new one.
+
+    The file is renamed, never truncated: Logstash follows files by inode, so it
+    finishes reading the renamed file and then picks up the new one. Truncating
+    in place (copytruncate) can lose or repeat lines.
+    """
+    fh.close()
+    os.replace(output, output + ".1")
+    print("simulator: rotated %s to %s.1" % (output, output), flush=True)
+    return open_log(output)
+
+
 def run(mode, rate, output):
     cfg = MODES[mode]
     interval = 60.0 / rate
@@ -201,8 +222,9 @@ def run(mode, rate, output):
     total = 0
     print("simulator: mode=%s rate=%d/min output=%s" % (mode, rate, output), flush=True)
 
-    # Append only, line buffered: Logstash sees each event as soon as it is written.
-    with open(output, "a", encoding="utf-8", buffering=1) as fh:
+    fh = open_log(output)
+    size = os.fstat(fh.fileno()).st_size  # an existing file keeps growing
+    try:
         while _running:
             if len(active) < cfg["max_sessions"]:
                 active.append(Session(pick_kind(cfg["weights"])))
@@ -212,15 +234,23 @@ def run(mode, rate, output):
             batch = 5 if session.kind == "burst" else 1
             emitted = 0
             while emitted < batch and not session.done:
-                fh.write(json.dumps(session.next_event(), separators=(",", ":")) + "\n")
+                line = json.dumps(session.next_event(), separators=(",", ":")) + "\n"
+                fh.write(line)
                 fh.flush()
+                size += len(line.encode("utf-8"))
                 emitted += 1
                 total += 1
+                # Rotate between events, so no line is ever split across files.
+                if size >= ROTATE_BYTES:
+                    fh = rotate(fh, output)
+                    size = 0
             if session.done:
                 active.remove(session)
 
             # Sleep in proportion to the events written, so the rate stays on target.
             time.sleep(emitted * interval * random.uniform(0.7, 1.3))
+    finally:
+        fh.close()
     print("simulator: stopped after %d events" % total, flush=True)
 
 

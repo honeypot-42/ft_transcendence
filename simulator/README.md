@@ -23,7 +23,7 @@ Because the events have the same shape as real Cowrie logs, the pipeline is iden
 | Volume | `honeypot_logs` (the simulator writes, Logstash mounts it **read-only**) |
 | Network | `network_mode: none`: the simulator has no network access |
 
-Every line is flushed immediately so Logstash (file input) picks it up in real time. The file is only ever appended to.
+Every line is flushed immediately so Logstash (file input) picks it up in real time. The file is only ever appended to, until it is rotated (see [Rotation](#rotation)).
 
 ## Modes
 
@@ -137,18 +137,36 @@ The IPs above are documentation ranges, only to keep this README harmless. The s
 4. **Geographic diversity.** Attackers come from many countries, with brute-force bursts (several failed logins from the same IP in a few seconds) in `enriched` and `stress`.
 5. **Fake data only.** Credentials and commands come from a built-in list of common attack patterns. No real third-party credentials. `shasum` values are random hashes: **no real malware, no real URLs that serve payloads**.
 6. **Hostile-looking content stays text.** Commands may contain things like `<script>alert(1)</script>`; the dashboard must display them escaped (see the security checklist).
-7. **Append-only and flushed.** Never truncate or rewrite the log file.
+7. **Append-only and flushed.** Never truncate or rewrite the log file: rotation renames it.
 
-> **Known limitation:** the file is never rotated. At about 300 bytes per event, `basic` writes ~4 MB/day and `stress` ~85 MB/day. Reset it with `docker compose down -v` (removes the volume). Rotation can be added if a long-running deployment needs it.
+## Rotation
+
+So the file does not grow without limit (`stress` writes ~85 MB/day), the simulator rotates it when it reaches **50 MB**:
+
+1. It closes `cowrie.json`.
+2. It renames it to `cowrie.json.1`, replacing the previous `cowrie.json.1`.
+3. It opens a new, empty `cowrie.json` and keeps writing there.
+
+Rotation happens between two events, so a line is never split across files. At most two files exist (~100 MB in total), so the simulator cannot fill the host disk.
+
+The file is **renamed, never truncated**. The Logstash file input follows files by inode, so it finishes reading the renamed file and then picks up the new one. Truncating in place (`copytruncate`) can lose or repeat lines.
+
+For Logstash to finish reading the lines that were still pending when the file was renamed, its `path` must also match the rotated name:
+
+```
+path => "/var/log/honeypot/cowrie.json*"
+```
+
+To start from scratch, remove the volume with `docker compose down -v`.
 
 ## Verification
 
-Acceptance criteria for the first version:
+Acceptance criteria (issue #25):
 
 - `cowrie.json` grows with valid events (each line parses as JSON).
-- Logstash indexes them into `logs-honeypot-default` with `source.geo.location`.
-- Events show diverse countries on the map.
-- `stress` mode sustains 200 events/min without errors.
+- The rate changes with `SIMULATOR_MODE` and `SIMULATOR_RATE`.
+
+Indexing in Elasticsearch is checked in issue #55 (GeoIP) and issue #56 (severity).
 
 Quick manual checks inside the container:
 
