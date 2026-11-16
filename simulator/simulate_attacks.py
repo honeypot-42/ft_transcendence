@@ -224,31 +224,34 @@ def run(mode, rate, output):
 
     fh = open_log(output)
     size = os.fstat(fh.fileno()).st_size  # an existing file keeps growing
+    burst = None
     try:
         while _running:
-            if len(active) < cfg["max_sessions"]:
-                active.append(Session(pick_kind(cfg["weights"])))
-            session = random.choice(active)
+            # A burst keeps the loop until it ends, so its failed logins come
+            # one after another from the same IP, with no other session between.
+            if burst is not None and not burst.done:
+                session = burst
+            else:
+                if len(active) < cfg["max_sessions"]:
+                    active.append(Session(pick_kind(cfg["weights"])))
+                session = random.choice(active)
+                burst = session if session.kind == "burst" else None
 
-            # Burst sessions fire several attempts back to back.
-            batch = 5 if session.kind == "burst" else 1
-            emitted = 0
-            while emitted < batch and not session.done:
-                line = json.dumps(session.next_event(), separators=(",", ":")) + "\n"
-                fh.write(line)
-                fh.flush()
-                size += len(line.encode("utf-8"))
-                emitted += 1
-                total += 1
-                # Rotate between events, so no line is ever split across files.
-                if size >= ROTATE_BYTES:
-                    fh = rotate(fh, output)
-                    size = 0
+            line = json.dumps(session.next_event(), separators=(",", ":")) + "\n"
+            fh.write(line)
+            fh.flush()
+            size += len(line.encode("utf-8"))
+            total += 1
+            # Rotate between events, so no line is ever split across files.
+            if size >= ROTATE_BYTES:
+                fh = rotate(fh, output)
+                size = 0
             if session.done:
                 active.remove(session)
 
-            # Sleep in proportion to the events written, so the rate stays on target.
-            time.sleep(emitted * interval * random.uniform(0.7, 1.3))
+            # One event per interval: the average rate is exactly the configured
+            # one, and the longest pause is 1.3 intervals (78 s at 1 event/min).
+            time.sleep(interval * random.uniform(0.7, 1.3))
     finally:
         fh.close()
     print("simulator: stopped after %d events" % total, flush=True)

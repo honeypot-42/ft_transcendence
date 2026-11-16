@@ -168,7 +168,7 @@ services:
       context: ./simulator
       dockerfile: Dockerfile
     container_name: transcendence-simulator
-    restart: unless-stopped
+    restart: on-failure:3
     network_mode: none
     read_only: true
     environment:

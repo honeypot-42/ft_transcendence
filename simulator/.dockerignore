@@ -4,3 +4,4 @@ Dockerfile
 __pycache__/
 *.pyc
 *.json
+test_*.py

@@ -61,7 +61,7 @@ simulator:
     context: ./simulator
     dockerfile: Dockerfile
   container_name: transcendence-simulator
-  restart: unless-stopped
+  restart: on-failure:3
   network_mode: none
   read_only: true
   environment:
@@ -82,11 +82,12 @@ simulator:
 
 Notes:
 
-- `SIMULATOR_MODE` and `SIMULATOR_RATE` come from `.env`. If `SIMULATOR_RATE` is missing or empty, the rate of the mode is used. Keep in mind that a value in `.env` overrides the rate of every mode: to try `stress` at 200 events/min, change or empty `SIMULATOR_RATE` too.
+- `SIMULATOR_MODE` and `SIMULATOR_RATE` come from `.env`. `.env.example` leaves `SIMULATOR_RATE` empty, so each mode uses its own rate. A value there overrides the rate of every mode.
+- `restart: on-failure:3`: if the simulator fails (for example, an invalid `SIMULATOR_MODE` or `SIMULATOR_RATE`), Docker retries it 3 times and then leaves it stopped, so the error stays visible in `docker compose logs simulator` instead of repeating forever. A normal stop is not a failure and is not restarted.
 - `network_mode: none`: the simulator has no network. The volume is its only output, as for a real honeypot.
 - `read_only: true`: the root filesystem of the container is read-only, so the script and the image cannot be modified from inside. The mounted volume is still writable.
 - `cap_drop: ALL`, `no-new-privileges` and the CPU (0.25) and memory (128 MB) limits follow the honeypot containment rules of the security checklist.
-- The image defines a `HEALTHCHECK`: the container is healthy while the log file keeps being written (modified in the last 120 s).
+- The image defines a `HEALTHCHECK`: the container is healthy while the log file keeps being written (modified in the last 120 s). The longest pause between two events is 78 s, at the minimum rate.
 - The container runs as a non-root user (uid 10001). The image creates `/var/log/honeypot` owned by that user, so a new named volume inherits the ownership. Logstash must mount the same volume read-only (`honeypot_logs:/var/log/honeypot:ro`).
 - In the development compose Logstash is not started yet, so the file just grows until it rotates. This is expected: the first deliverable is a `cowrie.json` with valid events.
 
@@ -109,19 +110,19 @@ The simulator reproduces the fields of Cowrie's JSON log. Common fields on every
 
 ### Event types
 
-The pipeline derives severity and the MITRE ATT&CK technique from `eventid`, so the simulator must emit all of these:
+The simulator emits all of these event types:
 
-| `eventid` | Extra fields | Severity | MITRE technique |
-|-----------|--------------|----------|-----------------|
-| `cowrie.session.connect` | | low | T1046 |
-| `cowrie.client.version` | `version` | n/a | n/a |
-| `cowrie.login.failed` | `username`, `password` | low | T1110.001 |
-| `cowrie.login.success` | `username`, `password` | medium | T1078 |
-| `cowrie.command.input` | `input` | high | T1059.004 |
-| `cowrie.session.file_download` | `url`, `outfile`, `shasum` | critical | T1105 |
-| `cowrie.session.closed` | `duration` | n/a | n/a |
+| `eventid` | Extra fields |
+|-----------|--------------|
+| `cowrie.session.connect` | |
+| `cowrie.client.version` | `version` |
+| `cowrie.login.failed` | `username`, `password` |
+| `cowrie.login.success` | `username`, `password` |
+| `cowrie.command.input` | `input` |
+| `cowrie.session.file_download` | `url`, `outfile`, `shasum` |
+| `cowrie.session.closed` | `duration` |
 
-The mapping lives in `elk/logstash/mappings/` and is maintained by the data pipeline owner.
+Severity and MITRE ATT&CK mapping belong to the data pipeline and are defined by its owner (issues #55 and #56).
 
 ### Example lines
 
@@ -136,9 +137,9 @@ The IPs above are documentation ranges, only to keep this README harmless. The s
 ## Rules the simulator must follow
 
 1. **Valid Cowrie format.** Same field names and types as real Cowrie; a line that breaks the format breaks the pipeline.
-2. **Unique events.** Logstash builds `event.id` as a SHA-256 over `session`, `timestamp` and `eventid`, and the real-time cursor (`search_after`) depends on it. Two events must never share all three.
+2. **Unique events.** Two events never share the same `session`, `timestamp` and `eventid`: timestamps are strictly increasing.
 3. **Coherent sessions.** Events of one `session` appear in a realistic order: connect, login attempts, optional commands/download, closed.
-4. **Geographic diversity.** Attackers come from many countries, with brute-force bursts (several failed logins from the same IP in a few seconds) in `enriched` and `stress`.
+4. **Geographic diversity.** Attackers come from many countries, with brute-force bursts in `enriched` and `stress`: many failed logins in a row from the same IP, with no other session in between. Like every event, they are written one per interval.
 5. **Fake data only.** Credentials and commands come from a built-in list of common attack patterns. No real third-party credentials. `shasum` values are random hashes: **no real malware, no real URLs that serve payloads**.
 6. **Hostile-looking content stays text.** Commands may contain things like `<script>alert(1)</script>`; the dashboard must display them escaped (see the security checklist).
 7. **Append-only and flushed.** Never truncate or rewrite the log file: rotation renames it.
@@ -155,11 +156,7 @@ Rotation happens between two events, so a line is never split across files. At m
 
 The file is **renamed, never truncated**. The Logstash file input follows files by inode, so it finishes reading the renamed file and then picks up the new one. Truncating in place (`copytruncate`) can lose or repeat lines.
 
-For Logstash to finish reading the lines that were still pending when the file was renamed, its `path` must also match the rotated name:
-
-```
-path => "/var/log/honeypot/cowrie.json*"
-```
+> **Proposal, pending #55 and #56:** the Logstash input is defined by the data pipeline owner. For Logstash to finish reading the lines that were still pending when the file was renamed, its `path` should also match the rotated name: `path => "/var/log/honeypot/cowrie.json*"`.
 
 To start from scratch, remove the volume with `docker compose down -v`.
 
@@ -171,6 +168,14 @@ Acceptance criteria (issue #25):
 - The rate changes with `SIMULATOR_MODE` and `SIMULATOR_RATE`.
 
 Indexing in Elasticsearch is checked in issue #55 (GeoIP) and issue #56 (severity).
+
+### Tests
+
+The event format is the contract with Logstash, so it is covered by unit tests (standard library `unittest`, no dependencies). They are excluded from the Docker image.
+
+```bash
+cd simulator && python3 -m unittest -v
+```
 
 Quick manual checks inside the container:
 
