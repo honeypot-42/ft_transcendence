@@ -87,6 +87,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Fails on high or critical advisories in production dependencies only:
+      # devDependencies never reach the runtime image. Lower levels are still
+      # listed in the log. The result can change without code changes when a
+      # new advisory is published.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Type check
         run: npx tsc --noEmit -p tsconfig.json
 
