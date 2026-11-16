@@ -7,7 +7,7 @@ RUN useradd --system --uid 10001 --no-create-home simulator \
     && chown simulator:simulator /var/log/honeypot
 
 WORKDIR /app
-COPY simulator.py .
+COPY simulate_attacks.py .
 
 USER simulator
 ENV PYTHONUNBUFFERED=1 \
@@ -19,4 +19,4 @@ ENV PYTHONUNBUFFERED=1 \
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import os,sys,time; sys.exit(0 if time.time()-os.path.getmtime(os.environ['SIM_OUTPUT'])<120 else 1)"
 
-CMD ["python", "simulator.py"]
+CMD ["python", "simulate_attacks.py"]

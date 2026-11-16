@@ -36,8 +36,8 @@ Every line is flushed immediately so Logstash (file input) picks it up in real t
 ## Usage
 
 ```bash
-python simulator.py --mode basic --output ./cowrie.json
-python simulator.py --mode enriched --output /var/log/honeypot/cowrie.json
+python simulate_attacks.py --mode basic --output ./cowrie.json
+python simulate_attacks.py --mode enriched --output /var/log/honeypot/cowrie.json
 ```
 
 | Option | Env variable | Default | Description |
