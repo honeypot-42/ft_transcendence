@@ -154,7 +154,7 @@ A PR cannot be merged until the required checks are green.
 
 | Job | Runs when the PR changes | What it does |
 |-----|--------------------------|--------------|
-| **Backend** | `backend/**` | `npm ci`, type check, ESLint (0 warnings), unit tests, e2e tests, build |
+| **Backend** | `backend/**` | `npm ci`, `npm audit` of production dependencies (fails on high or critical), type check, ESLint (0 warnings), unit tests, e2e tests, build |
 | **Frontend** | `frontend/**` | `npm ci`, ESLint (0 warnings), build |
 | **Docker** | `docker-compose*.yml`, `**/Dockerfile*`, `nginx/**`, `.env.example` | `docker compose config -q` and hadolint on every Dockerfile |
 | **Secret scan** | always | gitleaks on every commit of the PR |
@@ -169,6 +169,7 @@ Required checks in branch protection: **CI result** and **Analyze (javascript-ty
 # Backend
 cd backend
 npm ci
+npm audit --omit=dev --audit-level=high
 npx tsc --noEmit -p tsconfig.json
 npx eslint "{src,test}/**/*.ts" --max-warnings 0   # not `npm run lint`: it uses --fix
 npm test
@@ -188,6 +189,10 @@ docker run --rm -i hadolint/hadolint:v2.15.1 hadolint --failure-threshold warnin
 # Secrets: commits of your branch that are not in develop yet
 gitleaks git --redact --log-opts="origin/develop..HEAD"
 ```
+
+If `npm audit` fails, run `npm audit fix` (never `--force`: it can jump to a new
+major version) and then `npm ci`, so `node_modules` matches the updated lockfile.
+A new advisory can turn a PR red even if it does not touch dependencies.
 
 If gitleaks reports a real secret, removing it in a new commit is not enough:
 it is still in the history. Rotate the secret and ask for help to rewrite the branch.
