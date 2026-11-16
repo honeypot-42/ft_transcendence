@@ -63,6 +63,7 @@ simulator:
   container_name: transcendence-simulator
   restart: unless-stopped
   network_mode: none
+  read_only: true
   environment:
     - SIMULATOR_MODE=${SIMULATOR_MODE:-basic}
     - SIMULATOR_RATE=${SIMULATOR_RATE:-}
@@ -75,6 +76,7 @@ simulator:
   deploy:
     resources:
       limits:
+        cpus: "0.25"
         memory: 128m
 ```
 
@@ -82,9 +84,11 @@ Notes:
 
 - `SIMULATOR_MODE` and `SIMULATOR_RATE` come from `.env`. If `SIMULATOR_RATE` is missing or empty, the rate of the mode is used. Keep in mind that a value in `.env` overrides the rate of every mode: to try `stress` at 200 events/min, change or empty `SIMULATOR_RATE` too.
 - `network_mode: none`: the simulator has no network. The volume is its only output, as for a real honeypot.
+- `read_only: true`: the root filesystem of the container is read-only, so the script and the image cannot be modified from inside. The mounted volume is still writable.
+- `cap_drop: ALL`, `no-new-privileges` and the CPU (0.25) and memory (128 MB) limits follow the honeypot containment rules of the security checklist.
 - The image defines a `HEALTHCHECK`: the container is healthy while the log file keeps being written (modified in the last 120 s).
 - The container runs as a non-root user (uid 10001). The image creates `/var/log/honeypot` owned by that user, so a new named volume inherits the ownership. Logstash must mount the same volume read-only (`honeypot_logs:/var/log/honeypot:ro`).
-- In the development compose Logstash is not started yet, so the file simply grows. This is expected: the first deliverable is a `cowrie.json` with valid events.
+- In the development compose Logstash is not started yet, so the file just grows until it rotates. This is expected: the first deliverable is a `cowrie.json` with valid events.
 
 ## Event format
 
