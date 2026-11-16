@@ -171,7 +171,8 @@ services:
     restart: unless-stopped
     network_mode: none
     environment:
-      - SIM_MODE=${SIMULATOR_MODE:-basic}
+      - SIMULATOR_MODE=${SIMULATOR_MODE:-basic}
+      - SIMULATOR_RATE=${SIMULATOR_RATE:-}
     volumes:
       - honeypot_logs:/var/log/honeypot
     cap_drop:

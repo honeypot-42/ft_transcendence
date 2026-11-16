@@ -19,6 +19,10 @@ import uuid
 from datetime import datetime, timezone
 
 DEFAULT_OUTPUT = "/var/log/honeypot/cowrie.json"
+# Accepted range for SIMULATOR_RATE / --rate, in events per minute. The upper
+# bound keeps a typo from flooding the disk shared with the host.
+MIN_RATE = 1
+MAX_RATE = 1000
 SENSOR = "honeypot-sim"
 DST_IP = "172.18.0.2"
 
@@ -176,15 +180,26 @@ def stop(_signum, _frame):
     _running = False
 
 
-def run(mode, output):
+def parse_rate(value):
+    """Events per minute: an integer from MIN_RATE to MAX_RATE."""
+    try:
+        rate = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be an integer, got %r" % value) from None
+    if not MIN_RATE <= rate <= MAX_RATE:
+        raise argparse.ArgumentTypeError("must be between %d and %d, got %d" % (MIN_RATE, MAX_RATE, rate))
+    return rate
+
+
+def run(mode, rate, output):
     cfg = MODES[mode]
-    interval = 60.0 / cfg["rate"]
+    interval = 60.0 / rate
     folder = os.path.dirname(output)
     if folder:
         os.makedirs(folder, exist_ok=True)
     active = []
     total = 0
-    print("simulator: mode=%s rate=%d/min output=%s" % (mode, cfg["rate"], output), flush=True)
+    print("simulator: mode=%s rate=%d/min output=%s" % (mode, rate, output), flush=True)
 
     # Append only, line buffered: Logstash sees each event as soon as it is written.
     with open(output, "a", encoding="utf-8", buffering=1) as fh:
@@ -211,14 +226,20 @@ def run(mode, output):
 
 def main():
     parser = argparse.ArgumentParser(description="SENTINEL attack simulator (Cowrie JSON format)")
-    parser.add_argument("--mode", choices=sorted(MODES), default=os.environ.get("SIM_MODE", "basic"))
-    parser.add_argument("--output", default=os.environ.get("SIM_OUTPUT", DEFAULT_OUTPUT))
+    parser.add_argument("--mode", choices=sorted(MODES), default=os.environ.get("SIMULATOR_MODE", "basic"),
+                        help="behaviour and default rate (env SIMULATOR_MODE)")
+    # An empty SIMULATOR_RATE means "not set": the mode's own rate is used.
+    parser.add_argument("--rate", type=parse_rate, default=os.environ.get("SIMULATOR_RATE") or None,
+                        help="events per minute, overrides the mode's rate (env SIMULATOR_RATE)")
+    parser.add_argument("--output", default=os.environ.get("OUTPUT_FILE", DEFAULT_OUTPUT),
+                        help="log file to append to (env OUTPUT_FILE)")
     args = parser.parse_args()
     if args.mode not in MODES:
-        sys.exit("invalid SIM_MODE: %s (use basic, enriched or stress)" % args.mode)
+        sys.exit("invalid SIMULATOR_MODE: %s (use basic, enriched or stress)" % args.mode)
+    rate = args.rate or MODES[args.mode]["rate"]
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    run(args.mode, args.output)
+    run(args.mode, rate, args.output)
 
 
 if __name__ == "__main__":

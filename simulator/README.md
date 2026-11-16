@@ -33,17 +33,23 @@ Every line is flushed immediately so Logstash (file input) picks it up in real t
 | `enriched` | ~30 events/min | Demos and evaluation: more countries, brute-force bursts, commands |
 | `stress` | ~200 events/min | Load tests (the dashboard must hold 200 events/min) |
 
+The mode sets the behaviour (how many sessions run in parallel, how many brute-force bursts) and a default rate. `SIMULATOR_RATE` (or `--rate`) overrides only the rate, so you can, for example, run `enriched` traffic at 100 events/min.
+
 ## Usage
 
 ```bash
 python simulate_attacks.py --mode basic --output ./cowrie.json
 python simulate_attacks.py --mode enriched --output /var/log/honeypot/cowrie.json
+python simulate_attacks.py --mode stress --rate 500 --output ./cowrie.json
 ```
 
 | Option | Env variable | Default | Description |
 |--------|--------------|---------|-------------|
-| `--mode` | `SIM_MODE` | `basic` | `basic`, `enriched` or `stress` |
-| `--output` | `SIM_OUTPUT` | `/var/log/honeypot/cowrie.json` | Log file to append to |
+| `--mode` | `SIMULATOR_MODE` | `basic` | `basic`, `enriched` or `stress` |
+| `--rate` | `SIMULATOR_RATE` | rate of the mode | Events per minute, integer from 1 to 1000. Empty means "use the mode's rate" |
+| `--output` | `OUTPUT_FILE` | `/var/log/honeypot/cowrie.json` | Log file to append to |
+
+Command-line options take precedence over the environment variables. An invalid mode or rate stops the simulator at start-up with a clear error instead of running with a wrong value.
 
 No external key or manual step is needed. The output directory is created if it does not exist. Outside Docker, pass `--output` with a path you can write to: the default is under `/var/log`, which normally needs root.
 
@@ -58,7 +64,8 @@ simulator:
   restart: unless-stopped
   network_mode: none
   environment:
-    - SIM_MODE=${SIMULATOR_MODE:-basic}
+    - SIMULATOR_MODE=${SIMULATOR_MODE:-basic}
+    - SIMULATOR_RATE=${SIMULATOR_RATE:-}
   volumes:
     - honeypot_logs:/var/log/honeypot
   cap_drop:
@@ -73,7 +80,7 @@ simulator:
 
 Notes:
 
-- `SIMULATOR_MODE` in `.env` selects the mode (`basic` by default). The compose maps it to the `SIM_MODE` variable the script reads.
+- `SIMULATOR_MODE` and `SIMULATOR_RATE` come from `.env`. If `SIMULATOR_RATE` is missing or empty, the rate of the mode is used. Keep in mind that a value in `.env` overrides the rate of every mode: to try `stress` at 200 events/min, change or empty `SIMULATOR_RATE` too.
 - `network_mode: none`: the simulator has no network. The volume is its only output, as for a real honeypot.
 - The image defines a `HEALTHCHECK`: the container is healthy while the log file keeps being written (modified in the last 120 s).
 - The container runs as a non-root user (uid 10001). The image creates `/var/log/honeypot` owned by that user, so a new named volume inherits the ownership. Logstash must mount the same volume read-only (`honeypot_logs:/var/log/honeypot:ro`).
