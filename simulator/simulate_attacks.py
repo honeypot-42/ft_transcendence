@@ -14,6 +14,7 @@ import os
 import random
 import signal
 import sys
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -73,18 +74,24 @@ DOWNLOAD_URLS = [
 
 SSH_VERSIONS = ["SSH-2.0-libssh_0.9.6", "SSH-2.0-Go", "SSH-2.0-OpenSSH_8.9p1", "SSH-2.0-paramiko_3.4.0"]
 
-_last_ts = None
-_running = True
+_last_us = None
+# Set by the signal handler. The main loop waits on it instead of sleeping:
+# time.sleep is not interrupted by a signal, so at low rates the simulator
+# would still be asleep when Docker sends SIGKILL, 10 s after SIGTERM.
+_stop_event = threading.Event()
 
 
 def now_utc():
     """UTC time in Cowrie format. Strictly increasing so events stay unique."""
-    global _last_ts
-    ts = time.time()
-    if _last_ts is not None and ts <= _last_ts:
-        ts = _last_ts + 0.000001
-    _last_ts = ts
-    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    global _last_us
+    # Whole microseconds: adding 1 is exact (float seconds are not), so two
+    # events never share a timestamp, even if the clock repeats or goes back.
+    us = time.time_ns() // 1000
+    if _last_us is not None and us <= _last_us:
+        us = _last_us + 1
+    _last_us = us
+    seconds, micros = divmod(us, 1000000)
+    return datetime.fromtimestamp(seconds, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + ".%06dZ" % micros
 
 
 def random_ip():
@@ -179,8 +186,7 @@ def pick_kind(weights):
 
 
 def stop(_signum, _frame):
-    global _running
-    _running = False
+    _stop_event.set()
 
 
 def parse_rate(value):
@@ -226,7 +232,7 @@ def run(mode, rate, output):
     size = os.fstat(fh.fileno()).st_size  # an existing file keeps growing
     burst = None
     try:
-        while _running:
+        while not _stop_event.is_set():
             # A burst keeps the loop until it ends, so its failed logins come
             # one after another from the same IP, with no other session between.
             if burst is not None and not burst.done:
@@ -251,7 +257,8 @@ def run(mode, rate, output):
 
             # One event per interval: the average rate is exactly the configured
             # one, and the longest pause is 1.3 intervals (78 s at 1 event/min).
-            time.sleep(interval * random.uniform(0.7, 1.3))
+            # wait() returns as soon as stop() sets the event.
+            _stop_event.wait(interval * random.uniform(0.7, 1.3))
     finally:
         fh.close()
     print("simulator: stopped after %d events" % total, flush=True)

@@ -13,7 +13,9 @@ RUN addgroup -S -g 10001 simulator \
 WORKDIR /app
 COPY simulate_attacks.py .
 
-USER simulator
+# Numeric uid:gid, so the runtime can check that the user is not root without
+# reading /etc/passwd.
+USER 10001:10001
 # PYTHONDONTWRITEBYTECODE: the root filesystem is read-only in Compose, so
 # Python must not try to write .pyc files.
 ENV PYTHONUNBUFFERED=1 \
@@ -24,7 +26,11 @@ ENV PYTHONUNBUFFERED=1 \
 # Healthy while the log file keeps receiving events. The simulator writes one
 # event per interval, and the longest pause is 78 s (60 s x 1.3 at the minimum
 # rate of 1 event/min), so 120 s without writes means it is stuck.
+# Exec form: Docker runs Python directly, without a /bin/sh in between.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import os,sys,time; sys.exit(0 if time.time()-os.path.getmtime(os.environ['OUTPUT_FILE'])<120 else 1)"
+    CMD ["python", "-c", "import os,sys,time; sys.exit(0 if time.time()-os.path.getmtime(os.environ['OUTPUT_FILE'])<120 else 1)"]
 
-CMD ["python", "simulate_attacks.py"]
+# Exec form: Python is PID 1 and receives SIGTERM directly, so the simulator
+# closes the log file cleanly on docker stop. Extra arguments given at run
+# time (for example --mode stress) are passed to the script.
+ENTRYPOINT ["python", "simulate_attacks.py"]
