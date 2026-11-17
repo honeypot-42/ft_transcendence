@@ -177,10 +177,10 @@ With Docker Compose, the backend receives these variables from `docker-compose.d
 |----------|------------------|---------|
 | `NODE_ENV`, `PORT` | set by compose | Runtime mode and internal port (default `3001`) |
 | `JWT_SECRET`, `JWT_EXPIRES_IN` | `JWT_SECRET`, `JWT_EXPIRES_IN` | Sign and expire JWT tokens |
-| `DB_HOST`, `DB_PORT` | set by compose | PostgreSQL service address |
-| `DB_USER`, `DB_PASSWORD`, `DB_NAME` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | PostgreSQL credentials |
-| `ES_HOST` | set by compose | Elasticsearch service address |
-| `ES_USER`, `ES_PASSWORD` | `ELASTIC_USER`, `ELASTIC_PASSWORD` | Elasticsearch credentials |
+| `DATABASE_URL` | `DATABASE_URL` | PostgreSQL connection string (must match `POSTGRES_*`) |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | same names | PostgreSQL credentials |
+| `ELASTICSEARCH_URL` | `ELASTICSEARCH_URL` | Elasticsearch service address |
+| `ELASTICSEARCH_USER`, `ELASTICSEARCH_PASSWORD` | same names | Elasticsearch credentials (password empty in development) |
 
 > ⚠️ **Never commit the real `.env` file.** It is listed in `.gitignore`.
 > Only `.env.example` with placeholder values is committed. The list of variables
