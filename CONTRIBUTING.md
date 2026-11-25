@@ -14,14 +14,39 @@ git config --global user.name  "Your Name"
 git config --global user.email "the-email-of-your-github-account"
 ```
 
-Then copy the environment file and fill in the secrets:
+### Create your `.env`
+
+Every member creates **their own** `.env` with **their own** random secrets.
+These passwords are not shared accounts: they only let the containers on your machine talk to
+each other. Compose reads `.env` and hands each value to the services that need it, so
+Elasticsearch is created with the same password the backend then uses. Nobody needs anyone
+else's values: **never share or commit them** (not on Discord, not on GitHub).
+
+From the repository root:
 
 ```bash
-cp .env.example .env   # never commit .env
-openssl rand -hex 32   # run once per secret and paste the result
+# 1. Copy the template (never commit .env)
+cp .env.example .env
+
+# 2. Replace every placeholder secret with its own random value
+for v in POSTGRES_PASSWORD JWT_SECRET ELASTIC_PASSWORD LOGSTASH_ES_PASSWORD BACKEND_ES_PASSWORD; do
+  sed -i "s|^$v=.*|$v=$(openssl rand -hex 32)|" .env
+done
+
+# 3. Make the file readable only by you
+chmod 600 .env
+
+# 4. Check: it must print "compose OK" with no "variable is not set" warning
+docker compose -f docker-compose.dev.yml config -q && echo "compose OK"
 ```
 
-Secrets may only contain `A-Z a-z 0-9 _ -`: `openssl rand -hex 32` always does.
+- You never need to see or remember these values: the containers use them.
+- Secrets may only contain `A-Z a-z 0-9 _ -`: `openssl rand -hex 32` always does.
+- `KIBANA_SYSTEM_PASSWORD` stays empty in development (there is no Kibana).
+- `DATABASE_URL` and `ELASTICSEARCH_*` are only read when the backend runs outside Docker.
+  Inside Docker the compose file builds them from the values above.
+- Never print the file (`cat .env`, `docker compose config` without `-q`) in a shared screen,
+  a screenshot or an issue.
 
 ### Updating your `.env`
 
@@ -38,6 +63,11 @@ removes a variable in `.env.example`, update your `.env` by hand.
    Lines starting with `>` no longer exist: remove them.
 
 2. Give every new secret its own value with `openssl rand -hex 32`. Never reuse one.
+   To add a missing secret without typing it (example for `ELASTIC_PASSWORD`):
+
+   ```bash
+   grep -q '^ELASTIC_PASSWORD=' .env || echo "ELASTIC_PASSWORD=$(openssl rand -hex 32)" >> .env
+   ```
 
 3. If database or Elasticsearch credentials changed, the old volumes still hold the old ones.
    Recreate them (this **deletes local data**):
