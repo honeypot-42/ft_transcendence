@@ -1,72 +1,103 @@
 # docker-compose.dev.yml
 #
-# Development environment — lightweight stack for local development.
-# Excludes: Kibana, Logstash, Honeypots, Prometheus, Grafana
-# RAM usage: ~2 GB (comfortable on any machine with 8 GB)
+# Development stack. Everything goes through Nginx over HTTPS:
+#   https://localhost            → frontend (Vite, hot reload)
+#   https://localhost/api/...    → backend (NestJS, watch mode)
+#   wss://localhost/socket.io/   → backend (Socket.IO)
+#
+# Only Nginx publishes ports. Other services are reached with
+# `docker compose -f docker-compose.dev.yml exec <service> ...`.
+# Not included in development: Kibana, Cowrie, Prometheus, Grafana.
 #
 # Usage:
+#   cp .env.example .env            # and fill in the secrets
 #   docker compose -f docker-compose.dev.yml up --build
 #   docker compose -f docker-compose.dev.yml down
 #   docker compose -f docker-compose.dev.yml down -v   # also removes volumes
 
-name: transcendence-dev
+name: sentinel-dev
 
 # ─── Networks ────────────────────────────────────────────────────────────────
+# Each service joins only the networks it needs.
 networks:
-  app_net:
-    driver: bridge
+  edge_net:   # nginx ↔ frontend, backend
+  app_net:    # backend ↔ postgres
+  data_net:   # backend ↔ elasticsearch
 
 # ─── Volumes ─────────────────────────────────────────────────────────────────
 volumes:
   postgres_data:
   elasticsearch_data:
   honeypot_logs:
+  nginx_certs:      # self-signed certificate, generated on first start
 
 # ─── Services ────────────────────────────────────────────────────────────────
 services:
 
   # ---------------------------------------------------------------------------
-  # Frontend — React 18 + Vite (dev server with HMR)
-  # Accessible at: http://localhost:3000
-  # Owner: P1
+  # Nginx — single entry point (HTTPS). Owner: P2
+  # The only service of the application that publishes ports on the host.
+  # ---------------------------------------------------------------------------
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: sentinel-nginx
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"      # only redirects to HTTPS
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    volumes:
+      - nginx_certs:/etc/nginx/ssl
+    networks:
+      - edge_net
+    depends_on:
+      - frontend
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
+  # ---------------------------------------------------------------------------
+  # Frontend — React 18 + Vite (HMR through Nginx). Owner: P1
   # ---------------------------------------------------------------------------
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: transcendence-frontend
+    container_name: sentinel-frontend
     restart: unless-stopped
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     volumes:
       - ./frontend:/app
       - /app/node_modules
     environment:
-      - VITE_API_URL=${VITE_API_URL:-http://localhost:3001}
-      - VITE_WS_URL=${VITE_WS_URL:-http://localhost:3001}
+      # Same origin as the page: relative paths, never http://localhost:3001
+      - VITE_API_URL=/api/v1
+      - VITE_WS_PATH=/socket.io
     networks:
-      - app_net
-    depends_on:
-      - backend
+      - edge_net
     deploy:
       resources:
         limits:
           memory: 512m
 
   # ---------------------------------------------------------------------------
-  # Backend — NestJS (watch mode, auto-reload on changes)
-  # Accessible at: http://localhost:3001
-  # Swagger docs at: http://localhost:3001/api/docs
-  # Owner: P2
+  # Backend — NestJS (watch mode). Owner: P2
+  # Internal port only: https://localhost/api/v1/... and /api/docs via Nginx.
   # ---------------------------------------------------------------------------
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: transcendence-backend
+    container_name: sentinel-backend
     restart: unless-stopped
-    ports:
-      - "3001:3001"
+    expose:
+      - "3001"
     volumes:
       - ./backend:/app
       - /app/node_modules
@@ -75,15 +106,20 @@ services:
       - PORT=3001
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
-      - DATABASE_URL=${DATABASE_URL}
+      # Built here from POSTGRES_*, so inside Docker it can never drift from
+      # the database credentials. It takes precedence over the value in .env.
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
-      - ELASTICSEARCH_URL=${ELASTICSEARCH_URL}
+      - ELASTICSEARCH_URL=${ELASTICSEARCH_URL:-http://elasticsearch:9200}
       - ELASTICSEARCH_USER=${ELASTICSEARCH_USER}
       - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
     networks:
+      - edge_net
       - app_net
+      - data_net
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,16 +131,14 @@ services:
           memory: 512m
 
   # ---------------------------------------------------------------------------
-  # Database — PostgreSQL 16
+  # Database — PostgreSQL 16. Owner: P5
   # Stores: users, friendships, messages, notifications, api_keys
-  # Owner: P5
+  # Not published on the host: exec postgres psql -U <user> <db>
   # ---------------------------------------------------------------------------
   postgres:
     image: postgres:16-alpine
-    container_name: transcendence-postgres
+    container_name: sentinel-postgres
     restart: unless-stopped
-    ports:
-      - "5432:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -114,7 +148,8 @@ services:
     networks:
       - app_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      # $$ → the variables are read inside the container when the check runs
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -125,18 +160,15 @@ services:
           memory: 256m
 
   # ---------------------------------------------------------------------------
-  # Search & Analytics — Elasticsearch 8
+  # Search & Analytics — Elasticsearch 8. Owner: P3
   # Stores: attack events from honeypots (indexed by Logstash)
-  # Accessible at: http://localhost:9200
-  # Owner: P3
+  # Not published on the host: exec elasticsearch curl localhost:9200/...
   # NOTE: Security disabled in dev for simplicity. Enabled in production.
   # ---------------------------------------------------------------------------
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
-    container_name: transcendence-elasticsearch
+    container_name: sentinel-elasticsearch
     restart: unless-stopped
-    ports:
-      - "9200:9200"
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
@@ -145,7 +177,7 @@ services:
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
     networks:
-      - app_net
+      - data_net
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cat/health | grep -q green"]
       interval: 15s
@@ -166,7 +198,7 @@ services:
     build:
       context: ./simulator
       dockerfile: Dockerfile
-    container_name: transcendence-simulator
+    container_name: sentinel-simulator
     restart: on-failure:3
     network_mode: none
     read_only: true
@@ -186,6 +218,7 @@ services:
           memory: 128m
 
 # ─── RAM Summary (development) ───────────────────────────────────────────────
+# nginx:             64 MB
 # frontend:         512 MB
 # backend:          512 MB
 # postgres:         256 MB
@@ -193,4 +226,4 @@ services:
 # simulator:        128 MB
 # Docker overhead:  ~200 MB
 # ─────────────────────────────
-# TOTAL:           ~3.1 GB    OK on any machine with 8 GB RAM
+# TOTAL:           ~3.2 GB    OK on any machine with 8 GB RAM
