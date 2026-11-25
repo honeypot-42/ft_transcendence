@@ -1,0 +1,54 @@
+{
+  "index_patterns": ["logs-honeypot-*"],
+  "data_stream": {},
+  "priority": 200,
+  "composed_of": ["sentinel-settings"],
+  "template": {
+    "mappings": {
+      "properties": {
+        "@timestamp":  { "type": "date" },
+        "event": {
+          "properties": {
+            "id":     { "type": "keyword" },
+            "action": { "type": "keyword" }
+          }
+        },
+        "source": {
+          "properties": {
+            "ip": { "type": "ip" },
+            "geo": {
+              "properties": {
+                "country_iso_code": { "type": "keyword" },
+                "city_name":        { "type": "keyword" },
+                "location":         { "type": "geo_point" }
+              }
+            }
+          }
+        },
+        "network":  { "properties": { "protocol": { "type": "keyword" } } },
+        "honeypot": {
+          "properties": {
+            "type":    { "type": "keyword" },
+            "session": { "type": "keyword" }
+          }
+        },
+        "attack_type": { "type": "keyword" },
+        "severity":    { "type": "keyword" },
+        "threat": {
+          "properties": {
+            "tactic":    { "properties": { "id": { "type": "keyword" }, "name": { "type": "keyword" } } },
+            "technique": { "properties": { "id": { "type": "keyword" }, "name": { "type": "keyword" } } }
+          }
+        },
+        "credentials": {
+          "properties": {
+            "username": { "type": "keyword" },
+            "password": { "type": "keyword" }
+          }
+        },
+        "command":   { "type": "text" },
+        "file_hash": { "type": "keyword" }
+      }
+    }
+  }
+}

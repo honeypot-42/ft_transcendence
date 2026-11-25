@@ -1,0 +1,21 @@
+{
+  "index_patterns": ["logs-app-*"],
+  "data_stream": {},
+  "priority": 200,
+  "composed_of": ["sentinel-settings"],
+  "template": {
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "service":    { "type": "keyword" },
+        "level":      { "type": "keyword" },
+        "message":    { "type": "text" },
+        "client_ip":  { "type": "ip" },
+        "method":     { "type": "keyword" },
+        "uri":        { "type": "keyword" },
+        "status":     { "type": "integer" },
+        "duration":   { "type": "float" }
+      }
+    }
+  }
+}

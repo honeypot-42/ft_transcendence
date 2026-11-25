@@ -8,6 +8,7 @@
 # Only Nginx publishes ports. Other services are reached with
 # `docker compose -f docker-compose.dev.yml exec <service> ...`.
 # Not included in development: Kibana, Cowrie, Prometheus, Grafana.
+# The simulator replaces Cowrie: simulator → log volume → Logstash → Elasticsearch.
 #
 # Usage:
 #   cp .env.example .env            # and fill in the secrets
@@ -22,13 +23,14 @@ name: sentinel-dev
 networks:
   edge_net:   # nginx ↔ frontend, backend
   app_net:    # backend ↔ postgres
-  data_net:   # backend ↔ elasticsearch
+  data_net:   # backend, logstash, elk-setup ↔ elasticsearch
 
 # ─── Volumes ─────────────────────────────────────────────────────────────────
 volumes:
   postgres_data:
   elasticsearch_data:
-  honeypot_logs:
+  logstash_data:    # sincedb: how far Logstash has read each log file
+  honeypot_logs:    # simulator writes, logstash reads (read-only)
   nginx_certs:      # self-signed certificate, generated on first start
 
 # ─── Services ────────────────────────────────────────────────────────────────
@@ -112,9 +114,10 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
-      - ELASTICSEARCH_URL=${ELASTICSEARCH_URL:-http://elasticsearch:9200}
-      - ELASTICSEARCH_USER=${ELASTICSEARCH_USER}
-      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      # Read-only user created by elk-setup (role sentinel_reader), never `elastic`
+      - ELASTICSEARCH_USER=${BACKEND_ES_USER}
+      - ELASTICSEARCH_PASSWORD=${BACKEND_ES_PASSWORD}
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
     networks:
       - edge_net
@@ -125,6 +128,8 @@ services:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
+      elk-setup:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:
@@ -163,31 +168,90 @@ services:
   # Search & Analytics — Elasticsearch 8. Owner: P3
   # Stores: attack events from honeypots (indexed by Logstash)
   # Not published on the host: exec elasticsearch curl localhost:9200/...
-  # NOTE: Security disabled in dev for simplicity. Enabled in production.
+  # Security enabled in every environment. Plain HTTP only inside data_net:
+  # TLS ends at Nginx and Elasticsearch is never reachable from outside.
   # ---------------------------------------------------------------------------
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
     container_name: sentinel-elasticsearch
     restart: unless-stopped
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false
+      - cluster.name=sentinel-dev
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      # Password of the `elastic` superuser: used only by elk-setup and the healthcheck
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
       - ES_JAVA_OPTS=-Xms512m -Xmx1g
-      - cluster.name=transcendence-dev
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
     networks:
       - data_net
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cat/health | grep -q green"]
+      # Single node: a replica can never be assigned, so an index with replicas
+      # stays "yellow" forever. Waiting for "green" would block the stack.
+      test: ["CMD-SHELL", "curl -fsS -u elastic:$${ELASTIC_PASSWORD} 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' >/dev/null"]
       interval: 15s
       timeout: 10s
       retries: 10
-      start_period: 30s
+      start_period: 40s
     deploy:
       resources:
         limits:
           memory: 1536m
+
+  # ---------------------------------------------------------------------------
+  # ELK setup — one-shot: ILM, templates, least-privilege roles and users. Owner: P3
+  # Runs after Elasticsearch is healthy and exits; see elk/elasticsearch/setup.sh
+  # ---------------------------------------------------------------------------
+  elk-setup:
+    image: curlimages/curl:8.10.1
+    container_name: sentinel-elk-setup
+    restart: "no"
+    entrypoint: ["/bin/sh", "/setup/setup.sh"]
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - LOGSTASH_ES_USER=${LOGSTASH_ES_USER}
+      - LOGSTASH_ES_PASSWORD=${LOGSTASH_ES_PASSWORD}
+      - BACKEND_ES_USER=${BACKEND_ES_USER}
+      - BACKEND_ES_PASSWORD=${BACKEND_ES_PASSWORD}
+      - KIBANA_SYSTEM_PASSWORD=${KIBANA_SYSTEM_PASSWORD:-}
+    volumes:
+      - ./elk/elasticsearch:/setup:ro
+    networks:
+      - data_net
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Logstash — honeypot pipeline: Cowrie JSON → ECS + GeoIP → Elasticsearch. Owner: P3
+  # Reads the honeypot logs from a read-only volume: the only link between the
+  # honeypots and the rest of the system is a file.
+  # ---------------------------------------------------------------------------
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.13.4
+    container_name: sentinel-logstash
+    restart: unless-stopped
+    environment:
+      - LS_JAVA_OPTS=-Xms256m -Xmx512m
+      - LOGSTASH_ES_USER=${LOGSTASH_ES_USER}
+      - LOGSTASH_ES_PASSWORD=${LOGSTASH_ES_PASSWORD}
+      - XPACK_MONITORING_ENABLED=false
+    volumes:
+      - ./elk/logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./elk/logstash/mappings:/usr/share/logstash/mappings:ro
+      - honeypot_logs:/var/log/honeypot:ro
+      - logstash_data:/usr/share/logstash/data
+    networks:
+      - data_net
+    depends_on:
+      elk-setup:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
   # ---------------------------------------------------------------------------
   # Attack Simulator — generates realistic honeypot logs for development
@@ -223,7 +287,8 @@ services:
 # backend:          512 MB
 # postgres:         256 MB
 # elasticsearch:   1536 MB  (heap 512MB-1GB + JVM overhead)
+# logstash:        1024 MB  (heap 256-512MB + JVM overhead)
 # simulator:        128 MB
 # Docker overhead:  ~200 MB
 # ─────────────────────────────
-# TOTAL:           ~3.2 GB    OK on any machine with 8 GB RAM
+# TOTAL:           ~4.2 GB    OK on any machine with 8 GB RAM
