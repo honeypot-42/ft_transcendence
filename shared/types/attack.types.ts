@@ -47,13 +47,8 @@ export interface AttackEvent {
   mitre_tactic: string;     // "TA0006 - Credential Access"
   mitre_technique: string;  // "T1110 - Brute Force"
 
-  // Threat intelligence
-  virustotal: {
-    malicious: number;      // number of engines flagging as malicious
-    suspicious: number;
-    harmless: number;
-    score: number;          // 0-100, higher = more dangerous
-  };
+  // Threat intelligence is NOT part of the event: VirusTotal reputation is
+  // fetched on demand by the backend (see IpReputation below).
 
   // Cowrie-specific (SSH/Telnet honeypot)
   credentials_used?: {
@@ -80,22 +75,64 @@ export interface WebSocketEvent {
   data: AttackEvent | HoneypotStatus | NotificationPayload | UserStatusPayload;
 }
 
+// ─── IP reputation (VirusTotal, on demand, cached 24 h) ───────────────────────
+
+export interface IpReputation {
+  ip: string;
+  malicious: number;
+  suspicious: number;
+  harmless: number;
+  checked_at: string;      // ISO 8601
+}
+
+// ─── Alerts (public API CRUD resource: /api/v1/alerts) ────────────────────────
+
+export type AlertStatus = 'open' | 'investigating' | 'resolved';
+
+export interface Alert {
+  id: string;
+  severity: Severity;
+  title: string;
+  description: string;
+  source_ip: string | null;
+  es_event_id: string | null;
+  status: AlertStatus;
+  created_by: string;      // user id
+  resolved_by: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // ─── Honeypot status (used by GET /api/v1/honeypots/status) ──────────────────
 
+// Status is derived from the data (time since the last event), never from the
+// Docker API: the backend must not mount /var/run/docker.sock.
 export interface HoneypotStatus {
   name: HoneypotType;
-  status: 'running' | 'stopped' | 'error';
+  status: 'active' | 'idle' | 'no-data';   // <5 min · <24 h · no events in 24 h
   attacks_last_hour: number;
   last_attack_at: string | null;   // ISO 8601 or null if no attacks yet
 }
 
 // ─── Notification payload ─────────────────────────────────────────────────────
 
-export type NotificationType = 'attack_alert' | 'friend_request' | 'system';
+// The Notification system module requires a notification for every
+// create / update / delete action.
+export type NotificationType =
+  | 'alert'
+  | 'friend'
+  | 'message'
+  | 'profile'
+  | 'api_key'
+  | 'attack_critical';
+
+export type NotificationAction = 'created' | 'updated' | 'deleted';
 
 export interface NotificationPayload {
   id: string;
   type: NotificationType;
+  action: NotificationAction;
   content: string;
   is_read: boolean;
   created_at: string;     // ISO 8601

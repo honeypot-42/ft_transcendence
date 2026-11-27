@@ -1,0 +1,8 @@
+# Cowrie event → severity (fixed rules)
+"cowrie.session.connect": "low"
+"cowrie.login.failed": "low"
+"cowrie.login.success": "medium"
+"cowrie.command.input": "high"
+"cowrie.command.failed": "high"
+"cowrie.session.file_download": "critical"
+"cowrie.session.file_upload": "critical"

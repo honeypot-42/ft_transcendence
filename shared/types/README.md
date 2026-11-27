@@ -95,7 +95,7 @@ The core object. Emitted by WebSocket (`new-attack` event) and returned by the R
 | `honeypot_type` | `HoneypotType` | `"cowrie"` |
 | `severity` | `Severity` | `"critical"` |
 | `mitre_tactic` | `string` | `"TA0006 - Credential Access"` |
-| `virustotal.score` | `number` | `87` |
+| `mitre_technique` | `string` | `"T1110 - Brute Force"` |
 
 ### WebSocketEvent
 
@@ -117,9 +117,15 @@ Returned by `GET /api/v1/attacks/stats`. Used by the analytics dashboard charts.
 
 ## Severity levels
 
-| Level | Meaning | VirusTotal score |
-|-------|---------|-----------------|
-| `critical` | Confirmed malware or active exploit | > 30 |
-| `high` | High confidence threat | 10 - 30 |
-| `medium` | Suspicious activity | 1 - 10 |
-| `low` | Reconnaissance or scan | 0 |
+Severity is assigned by **rules in Logstash** from the Cowrie event type (it is not AI and
+does not depend on VirusTotal). The mapping lives in `elk/logstash/mappings/severity.yml`.
+
+| Level | Cowrie event | Meaning |
+|-------|--------------|---------|
+| `critical` | `cowrie.session.file_download` | The attacker downloaded a tool or malware |
+| `high` | `cowrie.command.input` | The attacker is running commands in the fake shell |
+| `medium` | `cowrie.login.success` | A brute-force attempt "succeeded" |
+| `low` | `cowrie.login.failed`, `cowrie.session.connect` | Scans and failed logins |
+
+VirusTotal reputation (`IpReputation`) is fetched **on demand** by the backend when an analyst
+opens an IP, and cached for 24 h. It is optional: without an API key the app still works.

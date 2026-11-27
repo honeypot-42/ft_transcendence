@@ -1,2 +1,6 @@
 # False positive: placeholder badge URL from the NestJS README template
 41ad1423c6a8acec926f6579219b0da958ba38ac:backend/README.md:generic-api-key:5
+
+# False positive: the Elasticsearch healthcheck references $ELASTIC_PASSWORD,
+# the value is read inside the container, no literal secret
+cb2c4fac70180c338aa3506ec107ec6edb53ddd6:docker-compose.dev.yml:curl-auth-user:193

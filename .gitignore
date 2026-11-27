@@ -27,10 +27,11 @@ elasticsearch_data/
 grafana_data/
 prometheus_data/
 
-# SSL certificates (real certs, not the config)
-nginx/ssl/*.pem
-nginx/ssl/*.crt
-nginx/ssl/*.key
+# TLS certificates and keys: generated at runtime, never committed
+nginx/ssl/
+*.pem
+*.crt
+*.key
 
 # OS files
 .DS_Store

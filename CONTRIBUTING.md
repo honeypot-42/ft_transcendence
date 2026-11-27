@@ -1,71 +1,149 @@
 # Contributing Guide — ft_transcendence
 
-> Read this before making your first commit. These rules are mandatory for all team members.
+> Read this before your first commit. These rules are mandatory for every team member.
 
 ---
 
-## Commit Convention
+## 0. One-time setup
 
-We use **Conventional Commits**. Every commit message must follow this format:
+Commit with **your own** GitHub account. The subject requires commits from every member,
+and GitHub only attributes a commit to you if its email belongs to your account.
+
+```bash
+git config --global user.name  "Your Name"
+git config --global user.email "the-email-of-your-github-account"
+```
+
+### Create your `.env`
+
+Every member creates **their own** `.env` with **their own** random secrets.
+These passwords are not shared accounts: they only let the containers on your machine talk to
+each other. Compose reads `.env` and hands each value to the services that need it, so
+Elasticsearch is created with the same password the backend then uses. Nobody needs anyone
+else's values: **never share or commit them** (not on Discord, not on GitHub).
+
+From the repository root:
+
+```bash
+# 1. Copy the template (never commit .env)
+cp .env.example .env
+
+# 2. Replace every placeholder secret with its own random value
+for v in POSTGRES_PASSWORD JWT_SECRET ELASTIC_PASSWORD LOGSTASH_ES_PASSWORD BACKEND_ES_PASSWORD; do
+  sed -i "s|^$v=.*|$v=$(openssl rand -hex 32)|" .env
+done
+
+# 3. Make the file readable only by you
+chmod 600 .env
+
+# 4. Check: it must print "compose OK" with no "variable is not set" warning
+docker compose -f docker-compose.dev.yml config -q && echo "compose OK"
+```
+
+- You never need to see or remember these values: the containers use them.
+- Secrets may only contain `A-Z a-z 0-9 _ -`: `openssl rand -hex 32` always does.
+- `KIBANA_SYSTEM_PASSWORD` stays empty in development (there is no Kibana).
+- `DATABASE_URL` and `ELASTICSEARCH_*` are only read when the backend runs outside Docker.
+  Inside Docker the compose file builds them from the values above.
+- Never print the file (`cat .env`, `docker compose config` without `-q`) in a shared screen,
+  a screenshot or an issue.
+
+### Updating your `.env`
+
+`.env` is not versioned, so it does not change when you pull. When a PR adds, renames or
+removes a variable in `.env.example`, update your `.env` by hand.
+
+1. See which variable names differ (only names are compared, values are never printed):
+
+   ```bash
+   diff <(grep -o '^[A-Z_]*=' .env.example | sort) <(grep -o '^[A-Z_]*=' .env | sort)
+   ```
+
+   Lines starting with `<` are missing in your `.env`: add them.
+   Lines starting with `>` no longer exist: remove them.
+
+2. Give every new secret its own value with `openssl rand -hex 32`. Never reuse one.
+   To add a missing secret without typing it (example for `ELASTIC_PASSWORD`):
+
+   ```bash
+   grep -q '^ELASTIC_PASSWORD=' .env || echo "ELASTIC_PASSWORD=$(openssl rand -hex 32)" >> .env
+   ```
+
+3. If database or Elasticsearch credentials changed, the old volumes still hold the old ones.
+   Recreate them (this **deletes local data**):
+
+   ```bash
+   docker compose -f docker-compose.dev.yml down -v
+   docker compose -f docker-compose.dev.yml up --build
+   ```
+
+The PR that changes `.env.example` lists the changes in its description.
+
+---
+
+## 1. Languages
+
+| What | Language |
+|------|----------|
+| Code, comments, commit messages, PR titles, files in the repository | **English** |
+| Issues, PR descriptions, reviews and comments on GitHub | **Spanish** |
+
+---
+
+## 2. Commit convention
+
+We use **Conventional Commits**:
 
 ```
 <type>(<scope>): <short description>
 
-Examples:
-  feat(map): add real-time attack animation on D3 globe
-  fix(auth): resolve JWT refresh token expiry bug
-  chore(docker): add elasticsearch service to dev compose
-  docs(api): add Swagger decorators to attacks endpoints
-  test(users): add unit tests for friends service
-  refactor(websocket): extract room logic into separate service
+feat(map): add real-time attack animation
+fix(auth): reject expired refresh tokens
+chore(docker): add healthcheck to elasticsearch
+docs(readme): add database schema section
+test(users): add unit tests for friends service
+refactor(realtime): extract room logic into a service
 ```
 
 ### Types
 
 | Type | When to use |
 |------|-------------|
-| `feat` | New feature or functionality |
+| `feat` | New feature |
 | `fix` | Bug fix |
-| `chore` | Config, setup, dependencies, infrastructure |
-| `docs` | Documentation only (README, comments, guides) |
+| `chore` | Config, setup, dependencies, infrastructure, CI |
+| `docs` | Documentation only |
 | `test` | Adding or updating tests |
-| `refactor` | Code change that does not add a feature or fix a bug |
-| `style` | Formatting, missing semicolons (no logic change) |
+| `refactor` | Code change that neither adds a feature nor fixes a bug |
+| `style` | Formatting only |
 
 ### Scopes
 
-Use the area of the codebase you are working on:
-
 ```
-auth, users, friends, chat, notifications, attacks, api-keys,
-websocket, elasticsearch, map, dashboard, docker, nginx, simulator,
-cowrie, logstash, grafana, docs
+auth, users, friends, chat, notifications, alerts, attacks, api-keys,
+realtime, websocket, elasticsearch, logstash, kibana, elk, map, dashboard, ui,
+backend, config, types, docker, nginx, ci, simulator, cowrie,
+docs, readme, contributing
 ```
 
 ### Rules
 
-- Description must be in **English**
-- Use **imperative mood**: "add feature" not "added feature"
-- Maximum **72 characters** in the first line
-- No capital letter at the start of the description
-- No period at the end
+- Description in **English**, **imperative mood** ("add", not "added")
+- First line ≤ **72 characters**, no capital letter at the start, no final period
+- One logical change per commit
 
 ---
 
-## Branch Naming
+## 3. Branches
 
 ```
-feature/P{number}-{short-description}
-
-Examples:
-  feature/P2-nestjs-setup
-  feature/P2-websocket-gateway
-  feature/P4-cowrie-honeypot
-  feature/P1-d3-world-map
-  feature/P5-auth-jwt
+main      ← stable, receives merges from develop only
+develop   ← integration branch
+feature/P{n}-{short-description}   e.g. feature/P2-nestjs-setup
+fix/…  docs/…  chore/…
 ```
 
-Always branch off from `develop`, never from `main`.
+Always branch off `develop`:
 
 ```bash
 git checkout develop
@@ -75,77 +153,72 @@ git checkout -b feature/P2-my-task
 
 ---
 
-## Pull Request Rules
+## 4. Pull requests
 
-- Every PR must target `develop` (not `main`)
-- PR title must match the issue title
-- PR description must include `Closes #<issue-number>`
-- Minimum **1 approval** required to merge into `develop`
-- Minimum **2 approvals** required to merge into `main`
-- You cannot approve your own PR
-- Resolve all review comments before merging
-- Do not merge if there are unresolved conflicts — fix them first
+- Target `develop` (never `main`)
+- Title in English following the commit convention; description in Spanish with `Closes #<issue>`
+- **1 approval from another member** to merge into `develop`, 2 for `main`
+- **Never approve or merge your own PR**
+- The author resolves conflicts and review comments
+- No PR stays more than 48 h without review — ping the team on Discord
 
-### PR Description Template
+### Template
 
 ```
 ## What does this PR do?
-Brief description of the changes.
 
 ## Related issue
-Closes #42
+Closes #
 
 ## How to test it
-Steps to verify the feature works.
 
 ## Checklist
-- [ ] npm run lint passes with 0 errors
-- [ ] No console.log left in the code
+- [ ] npm run lint passes with 0 errors and 0 warnings
+- [ ] npm run test passes
+- [ ] No console.log left (use the NestJS Logger in the backend)
+- [ ] No secrets, tokens or real credentials in the diff
+- [ ] If .env.example changed: the changes are listed for the team
 - [ ] Feature is demonstrable
 ```
 
 ---
 
-## Code Style
+## 5. Code style
 
-- **Language:** TypeScript everywhere (strict mode)
-- **Linting:** ESLint — run `npm run lint` before pushing. Zero errors, zero warnings.
-- **Formatting:** Prettier — run `npm run format` before pushing
-- No commented-out code in PRs
-- No `console.log` left in production code (use NestJS Logger in the backend)
+- **TypeScript** everywhere, `strict` mode
+- **ESLint** and **Prettier** (`npm run format`) before pushing
+- No commented-out code, no `console.log` in committed code
+- Validate every input: DTOs with `class-validator` in the backend, zod schemas in the frontend
+- Never use `dangerouslySetInnerHTML`: honeypot data is hostile input
 
 ---
 
-## Before Pushing
+## 6. Security rules
+
+- Secrets only in `.env`. `.env.example` contains names and placeholder values only
+- Never commit certificates or keys (`*.pem`, `*.key`, `*.crt`)
+- Never publish a port in Compose other than Nginx (80/443) and the honeypot ports
+- Never mount `/var/run/docker.sock` into a container
+- Services connect to Elasticsearch with their own least-privilege user, never as `elastic`
+- If a secret is ever pushed, tell the team and **rotate it** — deleting the commit is not enough
+
+---
+
+## 7. Before pushing
 
 ```bash
 # Backend
-cd backend
-npm run lint       # 0 errors, 0 warnings
-npm run test       # 0 failing tests
+cd backend && npx eslint "{src,test}/**/*.ts" --max-warnings 0 && npm test
 
 # Frontend
-cd frontend
-npm run lint       # 0 errors, 0 warnings
+cd frontend && npx eslint . --max-warnings 0 && npm test
 ```
 
----
-
-## Issue Workflow
-
-1. Pick an issue from the **To Do** column in the Project board
-2. Assign it to yourself
-3. Move it to **In Progress**
-4. Create your feature branch
-5. Work and commit following the convention above
-6. Open a PR → move issue to **In Review**
-7. Get at least 1 approval → merge → issue moves to **Done**
-
-For more details on how to use GitHub Issues, Projects and Milestones, read [docs/github_workflow.md](./docs/github_workflow.md).
+The full list of checks is in [Continuous Integration](#8-continuous-integration).
 
 ---
 
-## Continuous Integration
+## 8. Continuous Integration
 
 Every pull request to `develop` or `main` runs two workflows in GitHub Actions.
 A PR cannot be merged until the required checks are green.
@@ -184,7 +257,7 @@ npm run build
 
 # Docker (from the repository root)
 docker compose -f docker-compose.dev.yml --env-file .env.example config -q
-docker run --rm -i hadolint/hadolint:v2.15.1 hadolint --failure-threshold warning - < backend/Dockerfile
+docker run --rm -i hadolint/hadolint:v2.15.1 hadolint --failure-threshold warning - < nginx/Dockerfile
 
 # Secrets: commits of your branch that are not in develop yet
 gitleaks git --redact --log-opts="origin/develop..HEAD"
@@ -196,3 +269,13 @@ A new advisory can turn a PR red even if it does not touch dependencies.
 
 If gitleaks reports a real secret, removing it in a new commit is not enough:
 it is still in the history. Rotate the secret and ask for help to rewrite the branch.
+
+---
+
+## 9. Issue workflow
+
+1. Pick an issue from **To Do** and assign it to yourself
+2. Move it to **In Progress** and create your branch
+3. Commit following the convention
+4. Open a PR → move the issue to **In Review**
+5. Another member approves → merge → the issue moves to **Done**

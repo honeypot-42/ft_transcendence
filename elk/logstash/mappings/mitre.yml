@@ -1,0 +1,8 @@
+# Cowrie event → MITRE ATT&CK technique
+"cowrie.session.connect": "T1046"
+"cowrie.login.failed": "T1110.001"
+"cowrie.login.success": "T1078"
+"cowrie.command.input": "T1059.004"
+"cowrie.command.failed": "T1059.004"
+"cowrie.session.file_download": "T1105"
+"cowrie.session.file_upload": "T1105"
